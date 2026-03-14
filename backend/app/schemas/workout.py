@@ -121,3 +121,16 @@ class SessionOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+# ─── Exercise Catalog ─────────────────────────────────────────────────────────
+class ExerciseCatalogOut(BaseModel):
+    id: str
+    name: str
+    category: str
+    muscle_group: str
+    equipment: Optional[str] = None
+    description: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

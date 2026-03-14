@@ -3,6 +3,7 @@
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
@@ -17,6 +18,7 @@ from app.schemas.workout import (
     SessionExerciseOut,
     SetCreate,
     SetOut,
+    ExerciseCatalogOut,
 )
 from app.services import workout_service
 
@@ -136,3 +138,17 @@ async def log_set(
         current_user.id,
         data,
     )
+
+# ─── Exercise Catalog ─────────────────────────────────────────────────────────
+
+@router.get(
+    "/catalog",
+    response_model=list[ExerciseCatalogOut],
+)
+async def get_catalog(
+    category: Optional[str] = None,
+    muscle_group: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await workout_service.get_catalog(db, category, muscle_group)

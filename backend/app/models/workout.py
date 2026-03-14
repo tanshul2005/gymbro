@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Integer, Float, Text, ForeignKey, Enum
+from sqlalchemy import Column, String, DateTime, Integer, Float, Text, ForeignKey, Enum , Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
@@ -127,3 +127,28 @@ class ExerciseSet(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session_exercise = relationship("SessionExercise", back_populates="sets")
+
+# ─── Exercise Catalog ─────────────────────────────────────────────────────────
+
+\
+class ExerciseCatalog(Base):
+    __tablename__ = "exercise_catalog"
+
+    __table_args__ = (
+        Index("ix_exercise_catalog_category_muscle", "category", "muscle_group"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    name = Column(String(255), nullable=False, unique=True, index=True)
+
+    category = Column(String(100), nullable=False, index=True)
+
+    muscle_group = Column(String(100), nullable=False, index=True)
+
+    equipment = Column(String(100), nullable=True)
+
+    description = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+

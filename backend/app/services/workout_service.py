@@ -6,6 +6,7 @@ from sqlalchemy import select, and_, func
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 from datetime import datetime, timezone
+from typing import Optional
 
 from app.models.workout import (
     WorkoutPlan,
@@ -14,6 +15,7 @@ from app.models.workout import (
     SessionExercise,
     ExerciseSet,
     SessionStatusEnum,
+    ExerciseCatalog,
 )
 from app.schemas.workout import (
     PlanCreate,
@@ -310,3 +312,22 @@ async def log_set(
     await db.refresh(exercise_set)
 
     return exercise_set
+
+# ─── Exercise Catalog ─────────────────────────────────────────────────────────
+
+async def get_catalog(
+    db: AsyncSession,
+    category: Optional[str] = None,
+    muscle_group: Optional[str] = None,
+) -> list[ExerciseCatalog]:
+
+    query = select(ExerciseCatalog).order_by(ExerciseCatalog.name)
+
+    if category:
+        query = query.where(ExerciseCatalog.category == category)
+
+    if muscle_group:
+        query = query.where(ExerciseCatalog.muscle_group == muscle_group)
+
+    result = await db.execute(query)
+    return result.scalars().all()
