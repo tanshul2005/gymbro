@@ -1,3 +1,4 @@
+# backend/app/models/user.py
 from sqlalchemy import Column, String, Boolean, DateTime, Integer, Float, Enum, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -37,8 +38,6 @@ class User(Base):
     memory_facts = relationship("MemoryFact", back_populates="user", cascade="all, delete-orphan")
     workout_plans = relationship("WorkoutPlan", back_populates="user", cascade="all, delete-orphan")
     workout_sessions = relationship("WorkoutSession", back_populates="user", cascade="all, delete-orphan")
-
-    # Replaced generic Metric EAV → two dedicated tables
     daily_metrics = relationship("DailyMetrics", back_populates="user", cascade="all, delete-orphan")
     body_measurements = relationship("BodyMeasurement", back_populates="user", cascade="all, delete-orphan")
 

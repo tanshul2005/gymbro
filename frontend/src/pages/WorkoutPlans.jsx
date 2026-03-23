@@ -4,11 +4,29 @@ import WorkoutCard from "../components/WorkoutCard";
 import FilterChips from "../components/FilterChips";
 import client from "../api/client";
 
+import { useNavigate } from "react-router-dom";
+import { startSession } from "../api/client";
+
 export default function WorkoutPlans() {
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState("all");
+
+  const navigate = useNavigate();
+  const [startingPlanId, setStartingPlanId] = useState(null);
+
+  const handleStartSession = async (planId) => {
+    if (startingPlanId) return;
+    setStartingPlanId(planId);
+    try {
+      const res = await startSession({ plan_id: planId });
+      navigate(`/workouts/active/${res.data.id}`);
+    } catch (err) {
+      setError(err?.message ?? "Failed to start session.");
+      setStartingPlanId(null);
+    }
+  };
 
   useEffect(() => {
     client
@@ -182,7 +200,12 @@ export default function WorkoutPlans() {
               }}
             >
               {filteredPlans.map((plan) => (
-                <WorkoutCard key={plan.id} plan={plan} />
+                <WorkoutCard
+                  key={plan.id}
+                  plan={plan}
+                  onStart={() => handleStartSession(plan.id)}
+                  starting={startingPlanId === plan.id}
+                />
               ))}
             </div>
           </>

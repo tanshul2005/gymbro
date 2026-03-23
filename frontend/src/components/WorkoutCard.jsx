@@ -1,4 +1,4 @@
-export default function WorkoutCard({ plan }) {
+export default function WorkoutCard({ plan, onStart, starting = false }) {
   const exerciseCount = plan.plan_exercises?.length ?? 0;
 
   const formattedDate = new Date(plan.created_at).toLocaleDateString("en-US", {
@@ -113,18 +113,22 @@ export default function WorkoutCard({ plan }) {
           borderTop: "1px solid #1e2130",
         }}
       >
-        <span style={{ fontSize: "11px", color: "#4a5568" }}>
-          {exerciseCount} exercise{exerciseCount !== 1 ? "s" : ""}
-        </span>
-        <span
+        <button
+          onClick={(e) => { e.stopPropagation(); if (typeof onStart === "function") onStart(); }}
+          disabled={starting}
           style={{
+            background: "transparent",
+            border: "none",
+            padding: 0,
             fontSize: "11px",
-            color: "#c8f135",
+            color: starting ? "#4a5568" : "#c8f135",
             fontWeight: "600",
+            cursor: starting ? "not-allowed" : "pointer",
           }}
+          aria-label={`Start session for ${plan.name}`}
         >
-          Start Session →
-        </span>
+          {starting ? "Starting…" : "Start Session →"}
+        </button>
       </div>
     </div>
   );
