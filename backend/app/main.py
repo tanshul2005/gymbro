@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.routers import auth, workouts, metrics, profile, chat  # ← added chat
+from app.routers import auth, workouts, metrics, profile, chat, memory
 
 app = FastAPI(
     title="GymBro API",
@@ -22,7 +22,9 @@ app.include_router(auth.router)
 app.include_router(workouts.router)
 app.include_router(metrics.router)
 app.include_router(profile.router)
-app.include_router(chat.router)  # ← added
+app.include_router(chat.router)  
+app.include_router(memory.router)
+
 
 @app.get("/health")
 async def health_check():

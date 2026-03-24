@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, asc
@@ -10,6 +10,7 @@ from app.models.user import User
 from app.models.memory import Conversation, Message, MessageRoleEnum
 from app.schemas.chat import ChatMessageRequest, ChatHistoryResponse, MessageOut
 from app.services.llm_service import stream_chat_response
+from app.services.memory_service import process_message_for_memory
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -67,6 +68,7 @@ async def _get_recent_messages(
 @router.post("/message")
 async def send_message(
     body: ChatMessageRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -76,10 +78,11 @@ async def send_message(
     Flow:
       1. Get or create conversation
       2. Save user message to DB
-      3. Fetch recent history for context
-      4. Stream Gemini response, collecting full text
-      5. Save assistant message to DB
-      6. Commit and stream response to client
+      3. Schedule memory extraction as background task
+      4. Fetch recent history for context
+      5. Stream Gemini response, collecting full text
+      6. Save assistant message to DB
+      7. Commit and stream response to client
     """
     convo = await _get_or_create_conversation(
         user_id=current_user.id,
@@ -94,7 +97,24 @@ async def send_message(
         content=body.message,
     )
     db.add(user_msg)
-    await db.flush()
+    await db.flush()  # gives us user_msg.id without committing yet
+
+    # Schedule memory extraction — runs after the response is fully sent.
+    # Uses its own DB session so it doesn't interfere with the streaming session.
+    user_msg_id = str(user_msg.id)
+    user_id = str(current_user.id)
+    msg_text = body.message  # capture before body goes out of scope
+
+    async def _run_memory_extraction():
+        async for session in get_db():
+            await process_message_for_memory(
+                user_id=user_id,
+                user_message=msg_text,
+                db=session,
+                source_message_id=user_msg_id,
+            )
+
+    background_tasks.add_task(_run_memory_extraction)
 
     # Get context history (excludes the message we just saved)
     history = await _get_recent_messages(convo.id, db, limit=HISTORY_CONTEXT_LIMIT)
