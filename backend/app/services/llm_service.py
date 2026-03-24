@@ -1,24 +1,13 @@
 from google import genai
 from google.genai import types
 from typing import AsyncGenerator
+
 from app.core.config import settings
+from app.prompts.system_prompt import build_system_prompt
 
 client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 MODEL_NAME = "gemini-2.0-flash"
-
-SYSTEM_PROMPT = """You are an expert AI fitness coach named GymBro. You help users with:
-- Workout planning and exercise selection
-- Form cues and technique advice
-- Nutrition guidance and meal timing
-- Recovery strategies and injury prevention
-- Goal setting and progress tracking
-- Motivation and accountability
-
-Keep responses focused, practical, and encouraging.
-Use bullet points for lists. Keep answers concise unless asked for detail.
-Never give medical diagnoses — always recommend seeing a professional for injuries.
-"""
 
 
 def _build_contents(
@@ -34,7 +23,6 @@ def _build_contents(
     for msg in conversation_history:
         role = "model" if msg["role"] == "assistant" else "user"
         contents.append({"role": role, "parts": [{"text": msg["content"]}]})
-    # Append the current user message at the end
     contents.append({"role": "user", "parts": [{"text": user_message}]})
     return contents
 
@@ -42,14 +30,26 @@ def _build_contents(
 async def stream_chat_response(
     user_message: str,
     conversation_history: list[dict],
+    context: dict | None = None,
 ) -> AsyncGenerator[str, None]:
+    """
+    Stream a Gemini response token by token.
+
+    Args:
+        user_message:          the current user message
+        conversation_history:  list of prior messages as {"role", "content"} dicts
+        context:               optional dict with profile, stats, memories —
+                               passed to build_system_prompt to personalise the prompt.
+                               If None, falls back to the base GymBro prompt.
+    """
     contents = _build_contents(conversation_history, user_message)
+    system_prompt = build_system_prompt(context)
 
     response = await client.aio.models.generate_content_stream(
         model=MODEL_NAME,
         contents=contents,
         config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=system_prompt,
         ),
     )
 
@@ -61,17 +61,23 @@ async def stream_chat_response(
 async def get_chat_response(
     user_message: str,
     conversation_history: list[dict],
+    context: dict | None = None,
 ) -> str:
     """
-    Non-streaming version for background jobs (summaries etc.)
+    Non-streaming version — used by background jobs (summaries etc.)
+
+    Args:
+        context: same optional context dict as stream_chat_response.
+                 Background jobs typically pass None → base prompt.
     """
     contents = _build_contents(conversation_history, user_message)
+    system_prompt = build_system_prompt(context)
 
     response = await client.aio.models.generate_content(
         model=MODEL_NAME,
         contents=contents,
         config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=system_prompt,
         ),
     )
     return response.text

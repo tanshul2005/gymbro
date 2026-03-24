@@ -14,10 +14,10 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 
 # Vector DB
-chromadb==0.5.5
+chromadb>=0.6.0
 
 # LLM
-google-genai==0.8.0
+google-genai>=1.0.0
 
 # Scheduling
 apscheduler==3.10.4

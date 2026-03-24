@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.models.memory import MemoryFact, FactCategoryEnum
 from app.schemas.memory import ExtractorResponse, ExtractedFact
 from app.prompts.extractor_prompt import EXTRACTOR_SYSTEM_PROMPT, build_extractor_prompt
+from app.services.embedding_service import store_memory_embedding, retrieve_relevant_memories as _chroma_retrieve
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ async def extract_facts_from_message(user_message: str) -> list[ExtractedFact]:
             contents=[{"role": "user", "parts": [{"text": prompt}]}],
             config=types.GenerateContentConfig(
                 system_instruction=EXTRACTOR_SYSTEM_PROMPT,
-                temperature=0.1,   # low temp → consistent JSON output
+                temperature=0.1,
             ),
         )
 
@@ -53,7 +54,6 @@ async def extract_facts_from_message(user_message: str) -> list[ExtractedFact]:
 
         parsed = ExtractorResponse.model_validate_json(raw)
 
-        # Filter out low-confidence facts
         high_confidence = [
             f for f in parsed.facts if f.confidence >= CONFIDENCE_STORE
         ]
@@ -71,8 +71,6 @@ async def extract_facts_from_message(user_message: str) -> list[ExtractedFact]:
 
 # ─── Deduplication Logic ──────────────────────────────────────────────────────
 
-# Common words that appear in almost every extracted fact ("User wants to X")
-# and would create false duplicates between genuinely different facts.
 _STOPWORDS = {
     "user", "the", "a", "an", "is", "are", "was", "were", "be", "been",
     "has", "have", "had", "do", "does", "did", "will", "would", "could",
@@ -83,7 +81,6 @@ _STOPWORDS = {
 
 
 def _content_words(text: str) -> set[str]:
-    """Return meaningful words from a fact string, stripped of stopwords."""
     return {w for w in text.lower().split() if w not in _STOPWORDS and len(w) > 2}
 
 
@@ -93,13 +90,6 @@ async def _find_duplicate(
     new_fact: str,
     db: AsyncSession,
 ) -> MemoryFact | None:
-    """
-    Look for an existing active fact in the same category for this user.
-
-    Strategy: compare only meaningful content words (stopwords removed) using
-    a Jaccard-style overlap. Threshold raised to 0.6 to reduce false positives
-    between different facts that share filler words like 'User wants to...'.
-    """
     result = await db.execute(
         select(MemoryFact).where(
             MemoryFact.user_id == user_id,
@@ -120,10 +110,7 @@ async def _find_duplicate(
         existing_words = _content_words(existing.fact)
         if not existing_words:
             continue
-
-        # Jaccard-style overlap on content words only
         overlap = len(new_words & existing_words) / min(len(new_words), len(existing_words))
-
         if overlap >= 0.6:
             return existing
 
@@ -139,10 +126,8 @@ async def store_facts(
     source_message_id: str | None = None,
 ) -> tuple[int, int]:
     """
-    Persist extracted facts to the memory_facts table with deduplication.
-
-    - If a similar fact exists in the same category → update it (refresh text + confidence)
-    - If no duplicate found → insert as new fact
+    Persist extracted facts to Postgres with deduplication,
+    then write embeddings to ChromaDB for each stored fact.
 
     Returns (inserted_count, updated_count)
     """
@@ -158,15 +143,15 @@ async def store_facts(
         )
 
         if duplicate:
-            # Update existing fact with fresher info
             duplicate.fact = extracted.fact
             duplicate.confidence = extracted.confidence
             duplicate.source_message_id = source_message_id
             db.add(duplicate)
             updated += 1
+            fact_id = str(duplicate.id)
+            created_at = duplicate.created_at
             logger.debug(f"Updated fact [{extracted.category}]: {extracted.fact}")
         else:
-            # Insert new fact
             new_fact = MemoryFact(
                 user_id=user_id,
                 category=extracted.category,
@@ -176,14 +161,53 @@ async def store_facts(
                 is_active=True,
             )
             db.add(new_fact)
+            await db.flush()  # get the ID before committing
             inserted += 1
+            fact_id = str(new_fact.id)
+            created_at = new_fact.created_at
             logger.debug(f"Inserted fact [{extracted.category}]: {extracted.fact}")
+
+        # ── Write to ChromaDB (non-blocking — failure won't roll back Postgres) ──
+        await store_memory_embedding(
+            fact_id=fact_id,
+            user_id=user_id,
+            fact_text=extracted.fact,
+            category=extracted.category.value,
+            confidence=extracted.confidence,
+            created_at=created_at,
+        )
 
     if facts:
         await db.commit()
 
     logger.info(f"Memory store complete: {inserted} inserted, {updated} updated")
     return inserted, updated
+
+
+# ─── Public Retrieval Wrapper ─────────────────────────────────────────────────
+
+async def get_relevant_memories(
+    user_id: str,
+    query: str,
+    top_k: int = 5,
+) -> list[dict]:
+    """
+    Public wrapper around ChromaDB retrieval.
+    Called by the chat router before every Gemini call.
+
+    Returns a list of dicts with keys:
+        fact_text, category, confidence, similarity, recency_score, combined_score
+    Returns [] on any failure — never blocks chat.
+    """
+    try:
+        return await _chroma_retrieve(
+            user_id=user_id,
+            query=query,
+            top_k=top_k,
+        )
+    except Exception as e:
+        logger.error(f"get_relevant_memories failed for user {user_id}: {e}")
+        return []
 
 
 # ─── Main Entry Point ─────────────────────────────────────────────────────────
@@ -195,7 +219,7 @@ async def process_message_for_memory(
     source_message_id: str | None = None,
 ) -> None:
     """
-    Full pipeline: extract → filter → dedup → store.
+    Full pipeline: extract → filter → dedup → store (Postgres + ChromaDB).
     Called as a background task from the chat router.
     Swallows all exceptions so it never affects the chat response.
     """
