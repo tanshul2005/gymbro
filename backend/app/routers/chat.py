@@ -1,13 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, asc
+from sqlalchemy import select, asc, desc, and_
+from datetime import date, datetime
 import json
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User, Profile
 from app.models.memory import Conversation, Message, MessageRoleEnum, MemoryFact
+from app.models.workout import WorkoutSession, SessionStatusEnum, SessionExercise
+from app.models.metrics import DailyMetrics
 from app.schemas.chat import ChatMessageRequest, ChatHistoryResponse, MessageOut
 from app.services.llm_service import stream_chat_response
 from app.services.memory_service import process_message_for_memory, get_relevant_memories
@@ -28,12 +31,14 @@ async def _build_context(
 ) -> dict:
     """
     Assemble the full context package injected into the system prompt:
-      - profile   : user's profile fields from Postgres
-      - stats     : last-30-day metrics summary from Postgres
-      - memories  : top-5 semantically relevant facts from ChromaDB
+      - profile        : user's profile fields from Postgres
+      - today          : today's metrics + workout session from Postgres  ← NEW
+      - stats          : last-30-day metrics summary from Postgres
+      - memories       : top-5 semantically relevant facts from ChromaDB
+      - weekly_summary : most recent weekly narrative from ChromaDB
 
     Every section is individually try/catch-ed so a failure in one
-    (e.g. ChromaDB is down) never blocks the chat response.
+    never blocks the chat response.
     """
     context = {}
 
@@ -58,17 +63,81 @@ async def _build_context(
         import logging
         logging.getLogger(__name__).error(f"Context: profile fetch failed: {e}")
 
+    # ── Today's Activity ──────────────────────────────────────────────────────
+    try:
+        today = date.today()
+        today_data = {}
+
+        # Today's daily metrics row
+        metrics_result = await db.execute(
+            select(DailyMetrics).where(
+                and_(
+                    DailyMetrics.user_id == user_id,
+                    DailyMetrics.date == today,
+                )
+            )
+        )
+        today_metrics = metrics_result.scalar_one_or_none()
+
+        if today_metrics:
+            today_data["metrics"] = {
+                "steps":              today_metrics.steps,
+                "calories_burned":    today_metrics.calories_burned,
+                "calories_consumed":  today_metrics.calories_consumed,
+                "sleep_hours":        today_metrics.sleep_hours,
+                "water_ml":           today_metrics.water_ml,
+                "resting_heart_rate": today_metrics.resting_heart_rate,
+            }
+
+        # Today's most recent workout session (completed or in-progress)
+        today_start_dt = datetime.combine(today, datetime.min.time())
+        today_end_dt   = datetime.combine(today, datetime.max.time())
+
+        session_result = await db.execute(
+            select(WorkoutSession)
+            .where(
+                and_(
+                    WorkoutSession.user_id == user_id,
+                    WorkoutSession.started_at >= today_start_dt,
+                    WorkoutSession.started_at <= today_end_dt,
+                )
+            )
+            .order_by(desc(WorkoutSession.started_at))
+            .limit(1)
+        )
+        today_session = session_result.scalar_one_or_none()
+
+        if today_session:
+            ex_result = await db.execute(
+                select(SessionExercise).where(
+                    SessionExercise.session_id == today_session.id
+                )
+            )
+            exercise_count = len(ex_result.scalars().all())
+
+            today_data["workout_session"] = {
+                "name":           today_session.name or "Workout",
+                "status":         today_session.status.value,
+                "duration_mins":  today_session.duration_minutes,
+                "exercise_count": exercise_count,
+            }
+
+        context["today"] = today_data
+
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Context: today fetch failed: {e}")
+
     # ── Stats (last 30 days) ──────────────────────────────────────────────────
     try:
         summary = await get_metrics_summary(db=db, user_id=user_id)
 
-        # Map MetricsSummary fields → the shape system_prompt._stats_section() expects
         context["stats"] = {
             "aggregations": {
                 "avg_steps":           summary.avg_steps,
                 "avg_calories_burned": summary.avg_calories_burned,
                 "avg_sleep_hours":     summary.avg_sleep_hours,
-                "avg_water_ml":        summary.total_water_ml,       # total → used as proxy
+                "avg_water_ml":        summary.total_water_ml,
                 "avg_resting_hr":      summary.avg_resting_heart_rate,
                 "workout_count":       summary.workout_count,
                 "current_streak":      summary.current_streak,
@@ -103,23 +172,44 @@ async def _build_context(
             include=["metadatas", "documents"],
         )
         if results["ids"]:
-            # Sort by timestamp descending, take the most recent
             items = list(zip(results["metadatas"], results["documents"]))
             items.sort(key=lambda x: x[0].get("timestamp", 0), reverse=True)
             latest_meta, latest_doc = items[0]
 
-            import json as _json
-            # The document is the narrative text; full JSON is in Postgres.
-            # We surface the narrative inline and leave structured fields for
-            # the system prompt to format nicely.
-            context["weekly_summary"] = {
-                "narrative": latest_doc,
-                "activity_score": latest_meta.get("activity_score"),
-            }
-            import logging
-            logging.getLogger(__name__).debug(
-                f"Retrieved weekly summary for user {user_id}"
-            )
+            # Also try to pull structured fields from Postgres for richer context
+            try:
+                from app.models.memory import ConversationSummary
+                from sqlalchemy import desc as sa_desc
+                import json as _json
+
+                cs_result = await db.execute(
+                    select(ConversationSummary)
+                    .where(ConversationSummary.user_id == user_id)
+                    .order_by(sa_desc(ConversationSummary.week_start))
+                    .limit(1)
+                )
+                cs = cs_result.scalar_one_or_none()
+                if cs and cs.summary:
+                    structured = _json.loads(cs.summary)
+                    context["weekly_summary"] = {
+                        "narrative":       structured.get("narrative", latest_doc),
+                        "activity_score":  structured.get("activity_score", latest_meta.get("activity_score")),
+                        "highlights":      structured.get("highlights", []),
+                        "concerns":        structured.get("concerns", []),
+                        "trends":          structured.get("trends", []),
+                        "focus_next_week": structured.get("focus_next_week", []),
+                    }
+                else:
+                    context["weekly_summary"] = {
+                        "narrative":      latest_doc,
+                        "activity_score": latest_meta.get("activity_score"),
+                    }
+            except Exception:
+                context["weekly_summary"] = {
+                    "narrative":      latest_doc,
+                    "activity_score": latest_meta.get("activity_score"),
+                }
+
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"Context: weekly summary retrieval failed: {e}")
@@ -179,25 +269,12 @@ async def send_message(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Send a message and stream the AI response back.
-
-    Flow:
-      1. Get or create conversation
-      2. Save user message to DB
-      3. Schedule memory extraction as background task
-      4. Build context (profile + stats + memories) — NEW in Day 8
-      5. Fetch recent conversation history
-      6. Stream Gemini response with full context injected
-      7. Save assistant message to DB
-    """
     convo = await _get_or_create_conversation(
         user_id=current_user.id,
         conversation_id=body.conversation_id,
         db=db,
     )
 
-    # Save user message
     user_msg = Message(
         conversation_id=convo.id,
         role=MessageRoleEnum.user,
@@ -206,12 +283,10 @@ async def send_message(
     db.add(user_msg)
     await db.flush()
 
-    # Capture values before they go out of scope in the async generator
     user_msg_id = str(user_msg.id)
-    user_id = str(current_user.id)
-    msg_text = body.message
+    user_id     = str(current_user.id)
+    msg_text    = body.message
 
-    # Schedule memory extraction — runs after the response is fully sent
     async def _run_memory_extraction():
         async for session in get_db():
             await process_message_for_memory(
@@ -223,14 +298,12 @@ async def send_message(
 
     background_tasks.add_task(_run_memory_extraction)
 
-    # Build context package for this message — NEW in Day 8
     context = await _build_context(
         user_id=user_id,
         user_message=msg_text,
         db=db,
     )
 
-    # Get conversation history (excludes message we just saved)
     history = await _get_recent_messages(convo.id, db, limit=HISTORY_CONTEXT_LIMIT)
     if history and history[-1]["role"] == "user":
         history = history[:-1]
@@ -244,7 +317,7 @@ async def send_message(
             async for chunk in stream_chat_response(
                 user_message=msg_text,
                 conversation_history=history,
-                context=context,          # ← injected here
+                context=context,
             ):
                 full_response.append(chunk)
                 yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
@@ -281,10 +354,6 @@ async def get_history(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Returns the most recent conversation and all its messages.
-    Frontend calls this on page load to restore chat state.
-    """
     result = await db.execute(
         select(Conversation)
         .where(Conversation.user_id == current_user.id)
@@ -318,13 +387,6 @@ async def get_chat_memories(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Returns all active memory facts the AI has stored about this user.
-    Useful for the frontend to show 'what does the AI know about me'.
-
-    Optional ?category= filter (goal, preference, habit, limitation,
-                                achievement, personal, other)
-    """
     query = select(MemoryFact).where(
         MemoryFact.user_id == current_user.id,
         MemoryFact.is_active == True,
