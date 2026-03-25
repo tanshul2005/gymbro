@@ -79,6 +79,10 @@ const requireId = (id, label = "id") => {
   if (!id && id !== 0) throw new Error(`${label} is required`);
 };
 
+// ─── Dashboard ────────────────────────────────────────────────────────────────
+export const getDashboardSummary = (signal) =>
+  client.get("/dashboard/summary", { signal });
+
 // ─── Workout Plans ────────────────────────────────────────────────────────────
 export const getWorkoutPlans = () =>
   client.get("/workouts/plans");
