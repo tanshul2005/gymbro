@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User, Profile
 from app.models.memory import Conversation, Message, MessageRoleEnum, MemoryFact
-from app.models.workout import WorkoutSession, SessionStatusEnum, SessionExercise
+from app.models.workout import WorkoutSession, SessionStatusEnum, SessionExercise, ExerciseSet
 from app.models.metrics import DailyMetrics
 from app.schemas.chat import ChatMessageRequest, ChatHistoryResponse, MessageOut
 from app.services.llm_service import stream_chat_response
@@ -109,17 +109,39 @@ async def _build_context(
 
         if today_session:
             ex_result = await db.execute(
-                select(SessionExercise).where(
-                    SessionExercise.session_id == today_session.id
-                )
+                select(SessionExercise)
+                .where(SessionExercise.session_id == today_session.id)
+                .order_by(SessionExercise.order_index)
             )
-            exercise_count = len(ex_result.scalars().all())
+            session_exercises = ex_result.scalars().all()
+
+            exercises_detail = []
+            for se in session_exercises:
+                sets_result = await db.execute(
+                    select(ExerciseSet)
+                    .where(ExerciseSet.session_exercise_id == se.id)
+                    .order_by(ExerciseSet.set_number)
+                )
+                sets = sets_result.scalars().all()
+                exercises_detail.append({
+                    "name": se.exercise_name,
+                    "sets": [
+                        {
+                            "set":        s.set_number,
+                            "reps":       s.reps,
+                            "weight_kg":  s.weight_kg,
+                            "rest_secs":  s.rest_seconds,
+                        }
+                        for s in sets
+                    ],
+                })
 
             today_data["workout_session"] = {
                 "name":           today_session.name or "Workout",
                 "status":         today_session.status.value,
                 "duration_mins":  today_session.duration_minutes,
-                "exercise_count": exercise_count,
+                "exercise_count": len(session_exercises),
+                "exercises":      exercises_detail,
             }
 
         context["today"] = today_data

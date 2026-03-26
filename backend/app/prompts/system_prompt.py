@@ -95,6 +95,18 @@ def _today_section(today: dict) -> str:
             f"- Workout today: {name} ({status_str}{dur_str}, "
             f"{ex_count} exercise{'s' if ex_count != 1 else ''})"
         )
+        exercises = session.get("exercises", [])
+        for ex in exercises:
+            lines.append(f"  • {ex['name']}")
+            for s in ex.get("sets", []):
+                parts = [f"    Set {s['set']}:"]
+                if s.get("reps"):
+                    parts.append(f"{s['reps']} reps")
+                if s.get("weight_kg"):
+                    parts.append(f"@ {s['weight_kg']}kg")
+                if s.get("rest_secs"):
+                    parts.append(f"rest {s['rest_secs']}s")
+                lines.append(" ".join(parts))
     else:
         lines.append("- No workout logged today")
 
@@ -243,6 +255,10 @@ def build_system_prompt(context: dict | None = None) -> str:
             "## Instructions\n"
             "- For questions about TODAY (e.g. 'how is my day going', 'what have I done today'): "
             "use Today's Activity section above — be specific about what is and isn't logged.\n"
+            "- IMPORTANT: If Today's Activity shows 'No metrics logged yet today' or 'No workout logged today', "
+            "that means the USER has not logged data yet — NOT that you lack access. "
+            "Tell them clearly what they haven't logged yet and encourage them to do so. "
+            "Never say you don't have access or can't see their data.\n"
             "- For questions about THIS WEEK or PROGRESS: use Last Week's Summary section above.\n"
             "- Use profile, stats, and memories to personalise all other responses.\n"
             "- Reference data naturally — never dump raw numbers robotically.\n"
