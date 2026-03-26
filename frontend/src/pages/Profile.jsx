@@ -321,7 +321,7 @@ export default function Profile() {
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <Layout>
-      <div style={{ padding: "36px 40px", maxWidth: "640px", width: "100%" }}>
+      <div style={{ padding: "36px 40px", maxWidth: "640px", width: "100%", overflowY: "auto", flex: 1 }}>
 
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "32px" }}>

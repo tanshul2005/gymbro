@@ -343,6 +343,7 @@ async def log_set(
         duration_seconds=data.duration_seconds,
         rest_seconds=data.rest_seconds,
         notes=data.notes,
+        is_logged=True,   # marks this as an actually-performed set
     )
 
     db.add(exercise_set)

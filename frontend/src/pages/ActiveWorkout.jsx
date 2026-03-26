@@ -112,10 +112,10 @@ export default function ActiveWorkout() {
     setCompleteError(null);
 
     try {
-      const res = await completeSession(sessionId);
+      await completeSession(sessionId);
       if (!mountedRef.current) return;
       clearInterval(timerRef.current);
-      setSession(res.data);
+      navigate("/workouts");
     } catch (err) {
       if (!mountedRef.current) return;
       setCompleteError(err?.message ?? "Failed to complete session.");
@@ -259,7 +259,7 @@ export default function ActiveWorkout() {
   // ── Render: main ───────────────────────────────────────────────────────────
   return (
     <Layout>
-      <div style={{ padding: "36px 40px", maxWidth: "760px", width: "100%" }}>
+      <div style={{ padding: "36px 40px", maxWidth: "760px", width: "100%", overflowY: "auto", flex: 1 }}>
 
         {/* ── Top bar ── */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "28px" }}>

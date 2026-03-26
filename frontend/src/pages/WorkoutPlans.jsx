@@ -61,7 +61,7 @@ export default function WorkoutPlans() {
 
   return (
     <Layout>
-      <div style={{ padding: "36px 40px", maxWidth: "1100px", width: "100%" }}>
+      <div style={{ padding: "36px 40px", maxWidth: "1100px", width: "100%", overflowY: "auto", flex: 1 }}>
 
         {/* Header */}
         <div

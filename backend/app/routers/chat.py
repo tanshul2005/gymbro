@@ -119,7 +119,10 @@ async def _build_context(
             for se in session_exercises:
                 sets_result = await db.execute(
                     select(ExerciseSet)
-                    .where(ExerciseSet.session_exercise_id == se.id)
+                    .where(
+                        ExerciseSet.session_exercise_id == se.id,
+                        ExerciseSet.is_logged == True,   # noqa: E712 — only count actually-performed sets
+                    )
                     .order_by(ExerciseSet.set_number)
                 )
                 sets = sets_result.scalars().all()

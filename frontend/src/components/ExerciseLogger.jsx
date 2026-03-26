@@ -27,15 +27,15 @@ const makeIdGen = () => {
 
 const fromBackend = (set, genId) => ({
   _localId: genId(),
-  _saved: true,
+  _saved: !!set.id,   // only truly saved if it has a real DB id
   _saving: false,
-  _inFlight: false,   // Fix #3
+  _inFlight: false,
   _error: null,
-  id: set.id,
+  id: set.id ?? null,
   set_number: set.set_number,
   reps: set.reps ?? "",
   weight_kg: set.weight_kg ?? "",
-  done: true,
+  done: false,        // plan targets start un-done; user marks them complete
 });
 
 const emptyRow = (setNumber, genId) => ({
@@ -197,9 +197,40 @@ export default function ExerciseLogger({ exercise, sessionId, disabled = false }
         }
       }
 
-      // Done toggled OFF — only for unsaved rows
-      if (!newData.done && currentRow.done && !currentRow._saved) {
-        updateRow(localId, { done: false });
+      // Done toggled OFF
+      if (!newData.done && currentRow.done) {
+        if (!currentRow._saved || !currentRow.id) {
+          // Unsaved row — just uncheck locally
+          updateRow(localId, { done: false });
+        } else {
+          // Saved row — delete from backend so the set can be re-logged
+          if (currentRow._inFlight) return;
+          const controller = new AbortController();
+          controllersRef.current[localId] = controller;
+          updateRow(localId, { _saving: true, _inFlight: true, _error: null });
+          try {
+            await deleteSet(sessionId, exercise.id, currentRow.id, controller.signal);
+            if (!mountedRef.current) return;
+            // Reset to editable, un-done state (keep reps/weight as hints)
+            updateRow(localId, {
+              _saving: false,
+              _inFlight: false,
+              _saved: false,
+              id: null,
+              done: false,
+            });
+          } catch (err) {
+            if (!mountedRef.current) return;
+            if (err?.isCancelled) return;
+            updateRow(localId, {
+              _saving: false,
+              _inFlight: false,
+              _error: err?.message ?? "Failed to unmark set.",
+            });
+          } finally {
+            delete controllersRef.current[localId];
+          }
+        }
       }
     },
     [exercise?.id, updateRow] // Fix #2 — no `rows` in deps
@@ -345,7 +376,7 @@ export default function ExerciseLogger({ exercise, sessionId, disabled = false }
               data={{ reps: row.reps, weight_kg: row.weight_kg, done: row.done }}
               onChange={(newData) => handleChange(row._localId, newData)}
               onDelete={() => handleDelete(row._localId)}
-              disabled={disabled || row._saving || (row._saved && row.done)}
+              disabled={disabled || row._inFlight}
             />
             {row._error && (
               <p style={{ fontSize: "11px", color: "#e53e3e", padding: "0 12px 4px 54px", margin: 0 }}>

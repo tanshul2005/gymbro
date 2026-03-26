@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Integer, Float, Text, ForeignKey, Enum , Index
+from sqlalchemy import Column, String, DateTime, Integer, Float, Text, ForeignKey, Enum, Index, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
@@ -126,6 +126,9 @@ class ExerciseSet(Base):
     duration_seconds = Column(Integer, nullable=True)
     rest_seconds = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
+    # True only when the user explicitly logs this set (ticks ✓).
+    # Plan-seeded placeholder rows start as False so the AI doesn't count them.
+    is_logged = Column(Boolean, nullable=False, server_default="false", default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session_exercise = relationship("SessionExercise", back_populates="sets")
