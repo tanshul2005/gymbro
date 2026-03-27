@@ -27,6 +27,7 @@ from google.genai import types
 from app.core.config import settings
 from app.models.memory import Conversation, Message, MemoryFact, ConversationSummary
 from app.models.metrics import DailyMetrics, BodyMeasurement
+from app.models.workout import WorkoutSession, SessionStatusEnum, SessionExercise, ExerciseSet
 from app.prompts.summary_prompt import SUMMARY_SYSTEM_PROMPT, build_summary_prompt
 from app.services.embedding_service import _get_chroma_collections, embed_text
 
@@ -144,6 +145,127 @@ async def _fetch_memory_facts(user_id: str, db: AsyncSession) -> list[dict]:
         {"category": f.category.value, "fact": f.fact}
         for f in result.scalars().all()
     ]
+
+
+async def _fetch_week_mood(
+    user_id: str,
+    week_start: date,
+    week_end: date,
+    db: AsyncSession,
+) -> dict | None:
+    """
+    Aggregate mood_before / mood_after from completed workout sessions this week.
+    Returns a dict with per-session mood pairs and computed averages/min,
+    or None if no sessions with mood data exist.
+    """
+    week_start_dt = datetime.combine(week_start, datetime.min.time()).replace(tzinfo=timezone.utc)
+    week_end_dt   = datetime.combine(week_end,   datetime.max.time()).replace(tzinfo=timezone.utc)
+
+    result = await db.execute(
+        select(WorkoutSession).where(
+            WorkoutSession.user_id   == user_id,
+            WorkoutSession.status    == SessionStatusEnum.completed,
+            WorkoutSession.started_at >= week_start_dt,
+            WorkoutSession.started_at <= week_end_dt,
+        ).order_by(WorkoutSession.started_at)
+    )
+    sessions = result.scalars().all()
+
+    sessions_mood = []
+    all_before, all_after = [], []
+
+    for s in sessions:
+        entry = {
+            "date": s.started_at.date().isoformat() if s.started_at else None,
+            "name": s.name or "Workout",
+        }
+        if s.mood_before is not None:
+            entry["mood_before"] = s.mood_before
+            all_before.append(s.mood_before)
+        if s.mood_after is not None:
+            entry["mood_after"] = s.mood_after
+            all_after.append(s.mood_after)
+        if "mood_before" in entry or "mood_after" in entry:
+            sessions_mood.append(entry)
+
+    if not sessions_mood:
+        return None
+
+    def _avg(vals: list[int]) -> float | None:
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    return {
+        "sessions": sessions_mood,
+        "avg_mood_before": _avg(all_before),
+        "avg_mood_after":  _avg(all_after),
+        "min_mood_before": min(all_before) if all_before else None,
+        "min_mood_after":  min(all_after)  if all_after  else None,
+        "sessions_with_mood": len(sessions_mood),
+    }
+
+
+async def _fetch_week_sessions(
+    user_id: str,
+    week_start: date,
+    week_end: date,
+    db: AsyncSession,
+) -> list[dict]:
+    """
+    Fetch all completed workout sessions for the week with full exercise/set detail.
+    Returns a structured log for PR detection, volume analysis, and narrative generation.
+    """
+    week_start_dt = datetime.combine(week_start, datetime.min.time()).replace(tzinfo=timezone.utc)
+    week_end_dt   = datetime.combine(week_end,   datetime.max.time()).replace(tzinfo=timezone.utc)
+
+    result = await db.execute(
+        select(WorkoutSession).where(
+            WorkoutSession.user_id    == user_id,
+            WorkoutSession.status     == SessionStatusEnum.completed,
+            WorkoutSession.started_at >= week_start_dt,
+            WorkoutSession.started_at <= week_end_dt,
+        ).order_by(WorkoutSession.started_at)
+    )
+    sessions = result.scalars().all()
+    output = []
+
+    for session in sessions:
+        ex_result = await db.execute(
+            select(SessionExercise)
+            .where(SessionExercise.session_id == session.id)
+            .order_by(SessionExercise.order_index)
+        )
+        exercises = ex_result.scalars().all()
+
+        exercises_out = []
+        for ex in exercises:
+            sets_result = await db.execute(
+                select(ExerciseSet).where(
+                    ExerciseSet.session_exercise_id == ex.id,
+                    ExerciseSet.is_logged == True,   # noqa: E712
+                ).order_by(ExerciseSet.set_number)
+            )
+            sets = sets_result.scalars().all()
+            exercises_out.append({
+                "name": ex.exercise_name,
+                "sets": [
+                    {
+                        "set":       s.set_number,
+                        "reps":      s.reps,
+                        "weight_kg": s.weight_kg,
+                        "rest_secs": s.rest_seconds,
+                    }
+                    for s in sets
+                ],
+            })
+
+        output.append({
+            "date":          session.started_at.date().isoformat() if session.started_at else None,
+            "name":          session.name or "Workout",
+            "duration_mins": session.duration_minutes,
+            "exercises":     exercises_out,
+        })
+
+    return output
 
 
 def _fetch_previous_summaries(user_id: str, n: int = 4) -> list[str]:
@@ -323,6 +445,8 @@ async def generate_weekly_summary(
     conversations = await _fetch_week_conversations(user_id, week_start, week_end, db)
     daily_metrics, body_measurements = await _fetch_week_metrics(user_id, week_start, week_end, db)
     memory_facts = await _fetch_memory_facts(user_id, db)
+    week_mood = await _fetch_week_mood(user_id, week_start, week_end, db)
+    week_sessions = await _fetch_week_sessions(user_id, week_start, week_end, db)
 
     # 2. Activity guard
     if not _has_minimum_activity(conversations, daily_metrics):
@@ -341,6 +465,8 @@ async def generate_weekly_summary(
         body_measurements=body_measurements,
         memory_facts=memory_facts,
         previous_summaries=previous_summaries,
+        week_mood=week_mood,
+        week_sessions=week_sessions,
     )
 
     # 5. Call Gemini

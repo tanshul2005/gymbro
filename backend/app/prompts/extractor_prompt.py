@@ -24,6 +24,8 @@ CATEGORIES (use exactly these strings):
 - "achievement"  → PRs, completed races, weight lost, milestones they mention having reached
 - "habit"        → regular routines, sleep patterns, meal timing, supplement use, training frequency
 - "personal"     → age, height, current weight, occupation if fitness-relevant (e.g. desk job, physical labor)
+- "emotion"      → burnout signals, sustained motivation/demotivation patterns, anxiety about performance, persistent stress affecting training
+- "event"        → upcoming races, competitions, sports seasons, surgeries, life events that will impact training schedule
 - "other"        → fitness-related facts that don't fit above
 
 CONFIDENCE SCORING:
@@ -40,6 +42,8 @@ EXTRACTION RULES:
 5. Do NOT extract facts already implied by context (e.g. "user uses this app")
 6. One fact per JSON object — split compound facts
 7. Be specific: "User wants to lose 10 lbs by summer" beats "User wants to lose weight"
+8. Use "emotion" for SUSTAINED or RECURRING emotional states (burnout, chronic demotivation, performance anxiety) — not one-off moods
+9. Use "event" for SCHEDULED or PLANNED future events, or significant past events worth remembering (e.g. "User ran their first 10K last month")
 
 EXAMPLES:
 
@@ -63,6 +67,23 @@ Output:
     {"category": "personal", "fact": "User is 32 years old", "confidence": 99},
     {"category": "personal", "fact": "User weighs approximately 185 lbs", "confidence": 95},
     {"category": "goal", "fact": "User is training for their first marathon in October", "confidence": 99}
+  ]
+}
+
+User message: "I've been really burnt out lately, every workout feels like a chore and I dread going to the gym"
+Output:
+{
+  "facts": [
+    {"category": "emotion", "fact": "User is experiencing workout burnout and has persistent low motivation for training", "confidence": 92}
+  ]
+}
+
+User message: "I signed up for a half marathon in July, so I need to be careful not to overtrain"
+Output:
+{
+  "facts": [
+    {"category": "event", "fact": "User has a half marathon scheduled in July", "confidence": 99},
+    {"category": "goal", "fact": "User wants to avoid overtraining ahead of their July half marathon", "confidence": 90}
   ]
 }
 

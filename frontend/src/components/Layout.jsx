@@ -13,11 +13,11 @@ export default function Layout({ children }) {
     >
       <Sidebar />
 
-      {/* Main content area — clips to column, each page scrolls itself */}
+      {/* Main content area — scrolls naturally; AI Coach manages its own internal scroll */}
       <main
         style={{
           flex: 1,
-          overflow: "hidden",   // chat / other pages handle their own scroll
+          overflowY: "auto",
           display: "flex",
           flexDirection: "column",
         }}

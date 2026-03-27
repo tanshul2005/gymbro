@@ -47,6 +47,16 @@ export default function ActiveWorkout() {
   // ── Complete state ─────────────────────────────────────────────────────────
   const [completing, setCompleting] = useState(false);
   const [completeError, setCompleteError] = useState(null);
+  const [showMoodPicker, setShowMoodPicker] = useState(false);
+  const [moodAfter, setMoodAfter] = useState(null);
+
+  const MOOD_OPTIONS = [
+    { value: 2,  emoji: "😫", label: "Drained" },
+    { value: 4,  emoji: "😕", label: "Rough" },
+    { value: 6,  emoji: "😐", label: "Okay" },
+    { value: 8,  emoji: "💪", label: "Strong" },
+    { value: 10, emoji: "🔥", label: "Beast" },
+  ];
 
   // ── Catalog / add exercise state ───────────────────────────────────────────
   const [showCatalog, setShowCatalog] = useState(false);
@@ -106,13 +116,21 @@ export default function ActiveWorkout() {
   }, [session?.started_at, session?.status]);
 
   // ── Complete session ───────────────────────────────────────────────────────
-  const handleComplete = async () => {
+  // Step 1 — show mood picker overlay
+  const handleComplete = () => {
     if (!sessionId || completing) return;
+    setMoodAfter(null);
+    setShowMoodPicker(true);
+  };
+
+  // Step 2 — user confirms (or skips) mood, then finishes
+  const confirmComplete = async (mood) => {
+    setShowMoodPicker(false);
     setCompleting(true);
     setCompleteError(null);
-
     try {
-      await completeSession(sessionId);
+      const payload = mood !== null ? { mood_after: mood } : {};
+      await completeSession(sessionId, payload);
       if (!mountedRef.current) return;
       clearInterval(timerRef.current);
       navigate("/workouts");
@@ -449,6 +467,91 @@ export default function ActiveWorkout() {
           </button>
         )}
       </div>
+
+      {/* ── Post-workout mood picker ── */}
+      {showMoodPicker && (
+        <>
+          <div
+            onClick={() => setShowMoodPicker(false)}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 50 }}
+            aria-hidden="true"
+          />
+          <div
+            role="dialog"
+            aria-label="How did that feel?"
+            style={{
+              position: "fixed",
+              top: "50%", left: "50%",
+              transform: "translate(-50%,-50%)",
+              background: "#161a24",
+              border: "1px solid #1e2130",
+              borderRadius: "16px",
+              padding: "28px 32px",
+              zIndex: 60,
+              width: "min(380px, 90vw)",
+              textAlign: "center",
+            }}
+          >
+            <p style={{ fontSize: "11px", color: "#4a5568", letterSpacing: "0.1em", marginBottom: "8px" }}>POST-WORKOUT</p>
+            <h2 style={{ fontSize: "18px", fontWeight: "700", color: "#f0f4f8", marginBottom: "24px" }}>How did that feel?</h2>
+            <div style={{ display: "flex", justifyContent: "center", gap: "10px", marginBottom: "24px" }}>
+              {MOOD_OPTIONS.map(({ value, emoji, label }) => (
+                <button
+                  key={value}
+                  onClick={() => setMoodAfter(moodAfter === value ? null : value)}
+                  title={label}
+                  aria-label={label}
+                  style={{
+                    fontSize: "26px",
+                    padding: "8px",
+                    borderRadius: "10px",
+                    border: `2px solid ${moodAfter === value ? "#c8f135" : "transparent"}`,
+                    background: moodAfter === value ? "rgba(200,241,53,0.1)" : "transparent",
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                    lineHeight: 1,
+                  }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+            {moodAfter && (
+              <p style={{ fontSize: "12px", color: "#c8f135", marginBottom: "16px", fontWeight: "600" }}>
+                {MOOD_OPTIONS.find(m => m.value === moodAfter)?.label}
+              </p>
+            )}
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button
+                onClick={() => confirmComplete(null)}
+                style={{
+                  flex: 1, padding: "10px", borderRadius: "8px",
+                  border: "1px solid #2d3748", background: "transparent",
+                  color: "#4a5568", fontSize: "12px", cursor: "pointer",
+                }}
+              >
+                Skip
+              </button>
+              <button
+                onClick={() => confirmComplete(moodAfter)}
+                disabled={!moodAfter}
+                style={{
+                  flex: 2, padding: "10px", borderRadius: "8px",
+                  border: "none",
+                  background: moodAfter ? "#c8f135" : "#2d3748",
+                  color: moodAfter ? "#0f1117" : "#4a5568",
+                  fontSize: "13px", fontWeight: "700",
+                  cursor: moodAfter ? "pointer" : "not-allowed",
+                  transition: "all 0.15s ease",
+                }}
+                aria-label="Save mood and finish workout"
+              >
+                Save &amp; Finish
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ── Catalog drawer ── */}
       {showCatalog && (

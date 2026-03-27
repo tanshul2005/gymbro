@@ -102,9 +102,9 @@ export const getSession = (sessionId, signal) => {
   return client.get(`/workouts/sessions/${sessionId}`, { signal });
 };
 
-export const completeSession = (sessionId) => {
+export const completeSession = (sessionId, data = {}) => {
   requireId(sessionId, "sessionId");
-  return client.put(`/workouts/sessions/${sessionId}`, {});
+  return client.put(`/workouts/sessions/${sessionId}`, data);
 };
 
 export const addExerciseToSession = (sessionId, data) => {

@@ -80,8 +80,26 @@ def _today_section(today: dict) -> str:
                 has_any = True
         if not has_any:
             lines.append("- No metrics logged yet today")
+        elif metrics.get("notes"):
+            lines.append(f"- Notes: {metrics['notes']}")
     else:
         lines.append("- No metrics logged yet today")
+
+    # Today's body measurement snapshot
+    body = today.get("body") if today else None
+    if body:
+        body_labels = {
+            "weight_kg":      "Weight (kg)",
+            "body_fat_pct":   "Body fat %",
+            "muscle_mass_kg": "Muscle mass (kg)",
+            "chest_cm":       "Chest (cm)",
+            "waist_cm":       "Waist (cm)",
+            "hips_cm":        "Hips (cm)",
+        }
+        for key, label in body_labels.items():
+            val = body.get(key)
+            if val is not None:
+                lines.append(f"- {label}: {val}")
 
     session = today.get("workout_session") if today else None
     if session:
@@ -89,12 +107,26 @@ def _today_section(today: dict) -> str:
         status     = session.get("status", "")
         duration   = session.get("duration_mins")
         ex_count   = session.get("exercise_count", 0)
+        mood_before = session.get("mood_before")
+        mood_after  = session.get("mood_after")
         status_str = "completed" if status == "completed" else "in progress"
         dur_str    = f", {duration} mins" if duration else ""
         lines.append(
             f"- Workout today: {name} ({status_str}{dur_str}, "
             f"{ex_count} exercise{'s' if ex_count != 1 else ''})"
         )
+        # Mood ratings: map 1-10 to readable labels
+        _MOOD_LABELS = {
+            1: "very drained (1/10)", 2: "drained (2/10)",
+            3: "low (3/10)",         4: "low (4/10)",
+            5: "okay (5/10)",        6: "okay (6/10)",
+            7: "good (7/10)",        8: "good (8/10)",
+            9: "great (9/10)",       10: "pumped / peak (10/10)",
+        }
+        if mood_before is not None:
+            lines.append(f"  Pre-workout mood: {_MOOD_LABELS.get(mood_before, f'{mood_before}/10')}")
+        if mood_after is not None:
+            lines.append(f"  Post-workout mood: {_MOOD_LABELS.get(mood_after, f'{mood_after}/10')}")
         exercises = session.get("exercises", [])
         for ex in exercises:
             lines.append(f"  • {ex['name']}")
@@ -113,6 +145,58 @@ def _today_section(today: dict) -> str:
     return "\n".join(lines)
 
 
+def _recent_sessions_section(sessions: list) -> str:
+    """
+    Render last 7 days of completed workout sessions.
+    This is the primary context for 'what did I do this week' questions.
+    """
+    if not sessions:
+        return "## This Week's Workouts\n- No completed workouts in the last 7 days"
+
+    _MOOD_LABELS = {
+        1: "very drained (1/10)", 2: "drained (2/10)",
+        3: "low (3/10)",         4: "low (4/10)",
+        5: "okay (5/10)",        6: "okay (6/10)",
+        7: "good (7/10)",        8: "good (8/10)",
+        9: "great (9/10)",       10: "pumped / peak (10/10)",
+    }
+
+    lines = [
+        "## This Week's Workouts (last 7 days)",
+        "(Use this when the user asks what workouts they've done this week or asks for a workout analysis)",
+    ]
+
+    for ws in sessions:
+        date_str = ws.get("date", "?")
+        name = ws.get("name", "Workout")
+        dur = f", {ws['duration_mins']} mins" if ws.get("duration_mins") else ""
+        ex_count = ws.get("exercise_count", 0)
+        lines.append(f"\n### {date_str} — {name}{dur} ({ex_count} exercises)")
+
+        mb = ws.get("mood_before")
+        ma = ws.get("mood_after")
+        if mb is not None:
+            lines.append(f"  Pre-workout mood: {_MOOD_LABELS.get(mb, f'{mb}/10')}")
+        if ma is not None:
+            lines.append(f"  Post-workout mood: {_MOOD_LABELS.get(ma, f'{ma}/10')}")
+
+        for ex in ws.get("exercises", []):
+            muscle = f" [{ex['muscle_group']}]" if ex.get("muscle_group") else ""
+            sets = ex.get("sets", [])
+            if sets:
+                set_summary = ", ".join(
+                    f"{s['reps']}×{s['weight_kg']}kg" if s.get("weight_kg") and s.get("reps")
+                    else f"{s['reps']} reps" if s.get("reps")
+                    else "set"
+                    for s in sets
+                )
+                lines.append(f"  • {ex['name']}{muscle}: {set_summary}")
+            else:
+                lines.append(f"  • {ex['name']}{muscle}")
+
+    return "\n".join(lines)
+
+
 def _stats_section(stats: dict) -> str:
     if not stats:
         return ""
@@ -121,14 +205,17 @@ def _stats_section(stats: dict) -> str:
 
     agg = stats.get("aggregations", {})
     stat_labels = {
-        "avg_steps":           "Avg daily steps",
-        "avg_calories_burned": "Avg calories burned",
-        "avg_sleep_hours":     "Avg sleep hours",
-        "avg_water_ml":        "Avg water intake (ml)",
-        "avg_resting_hr":      "Avg resting heart rate",
-        "workout_count":       "Workouts logged",
-        "current_streak":      "Current streak (days)",
-        "longest_streak":      "Longest streak (days)",
+        "avg_steps":              "Avg daily steps",
+        "avg_calories_burned":    "Avg calories burned",
+        "avg_calories_consumed":  "Avg calories consumed",
+        "avg_sleep_hours":        "Avg sleep hours",
+        "avg_water_ml":           "Total water intake (ml, 30d)",
+        "avg_resting_hr":         "Avg resting heart rate",
+        "workout_count":          "Workouts logged",
+        "current_streak":         "Current streak (days)",
+        "longest_streak":         "Longest streak (days)",
+        "days_logged":            "Days with data logged",
+        "weight_change_kg":       "Weight change over period (kg)",
     }
     for key, label in stat_labels.items():
         value = agg.get(key)
@@ -215,11 +302,12 @@ def build_system_prompt(context: dict | None = None) -> str:
 
     Args:
         context: optional dict with any of these keys:
-            - profile        : dict  — user profile fields
-            - today          : dict  — today's metrics + workout session
-            - stats          : dict  — 30-day metrics summary
-            - memories       : list  — retrieved ChromaDB facts
-            - weekly_summary : dict  — most recent weekly reflection
+            - profile         : dict  — user profile fields
+            - today           : dict  — today's metrics + workout session
+            - recent_sessions : list  — last 7 days of completed sessions
+            - stats           : dict  — 30-day metrics summary
+            - memories        : list  — retrieved ChromaDB facts
+            - weekly_summary  : dict  — most recent weekly reflection
 
     Returns:
         A single string passed to GenerateContentConfig(system_instruction=...)
@@ -237,6 +325,10 @@ def build_system_prompt(context: dict | None = None) -> str:
     # Always included so Gemini knows explicitly what was/wasn't logged today
     today_block = _today_section(context.get("today") or {})
     sections.append(today_block)
+
+    # This week's sessions — always included (empty state has its own message)
+    recent_block = _recent_sessions_section(context.get("recent_sessions") or [])
+    sections.append(recent_block)
 
     stats_block = _stats_section(context.get("stats") or {})
     if stats_block:
@@ -259,10 +351,17 @@ def build_system_prompt(context: dict | None = None) -> str:
             "that means the USER has not logged data yet — NOT that you lack access. "
             "Tell them clearly what they haven't logged yet and encourage them to do so. "
             "Never say you don't have access or can't see their data.\n"
-            "- For questions about THIS WEEK or PROGRESS: use Last Week's Summary section above.\n"
+            "- MOOD: If Today's Activity includes Pre/Post-workout mood ratings, use them proactively. "
+            "Low pre-workout mood (\u22644/10) warrants a check-in. "
+            "A big drop from pre to post mood may indicate overtraining. "
+            "Consistently low mood across [emotion] memories signals burnout risk — address it empathetically.\n"
+            "- For questions about THIS WEEK, what workouts the user has done, or an in-depth workout analysis: "
+            "use 'This Week's Workouts' section above — list the actual sessions, exercises, and sets performed. "
+            "Never say you can't see their workouts if workouts appear in that section.\n"
+            "- For broader PROGRESS TRENDS: also use Last Week's Summary if available.\n"
             "- Use profile, stats, and memories to personalise all other responses.\n"
             "- Reference data naturally — never dump raw numbers robotically.\n"
             "- If the user says something that contradicts a memory, trust the new message."
         )
 
-    return "\n\n".join(sections)
+    return "\n\n".join(sections)

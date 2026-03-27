@@ -111,10 +111,12 @@ class SessionExerciseOut(BaseModel):
 class SessionCreate(BaseModel):
     plan_id: Optional[str] = None
     notes: Optional[str] = None
+    mood_before: Optional[int] = Field(None, ge=1, le=10)
 
 
 class SessionComplete(BaseModel):
     notes: Optional[str] = None
+    mood_after: Optional[int] = Field(None, ge=1, le=10)
 
 
 class SessionOut(BaseModel):
@@ -126,6 +128,8 @@ class SessionOut(BaseModel):
     completed_at: Optional[datetime] = None
     duration_minutes: Optional[int] = None
     notes: Optional[str] = None
+    mood_before: Optional[int] = None
+    mood_after: Optional[int] = None
     session_exercises: List[SessionExerciseOut] = Field(default_factory=list)
 
     class Config:

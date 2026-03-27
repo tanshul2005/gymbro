@@ -47,6 +47,18 @@ SCORING GUIDELINES for activity_score:
 - Add 5 pts if body measurements were logged
 - Add 10 pts if new achievement or goal milestone mentioned
 - Add 10 pts if consistent conversations with GymBro (3+ days)
+- Add 5 pts if avg post-workout mood >= 7/10 (feeling consistently good after sessions)
+- Subtract 5 pts if any pre-workout mood <= 3/10 (possible burnout signal)
+
+MOOD RULES:
+- If avg pre-workout mood < 5/10 across multiple sessions, flag this in concerns as a potential burnout or motivation risk.
+- If post-workout mood is consistently lower than pre-workout mood, note possible overtraining in concerns.
+- Reference mood trends warmly in the narrative — never clinically.
+
+WORKOUT ANALYSIS:
+- Use the WORKOUT SESSIONS data to identify the heaviest weight lifted per exercise (potential PRs).
+- Note total sets and estimated weekly volume if meaningful.
+- If a specific exercise shows increasing weight vs prior weeks (from previous summaries), call it out as a positive trend.
 """
 
 
@@ -60,6 +72,8 @@ def build_summary_prompt(
     body_measurements: list[dict],
     memory_facts: list[dict],
     previous_summaries: list[str],
+    week_mood: dict | None = None,
+    week_sessions: list[dict] | None = None,
 ) -> str:
     """
     Format the week's data into the user-turn prompt for the summary call.
@@ -121,16 +135,34 @@ def build_summary_prompt(
         lines.append("=== BODY MEASUREMENTS THIS WEEK ===")
         for b in body_measurements:
             parts = [f"[{b['date']}]"]
-            if b.get("weight_kg"):
-                parts.append(f"weight={b['weight_kg']}kg")
-            if b.get("body_fat_pct"):
-                parts.append(f"body_fat={b['body_fat_pct']}%")
-            if b.get("muscle_mass_kg"):
-                parts.append(f"muscle={b['muscle_mass_kg']}kg")
+            if b.get("weight_kg"):      parts.append(f"weight={b['weight_kg']}kg")
+            if b.get("body_fat_pct"):   parts.append(f"body_fat={b['body_fat_pct']}%")
+            if b.get("muscle_mass_kg"): parts.append(f"muscle={b['muscle_mass_kg']}kg")
+            if b.get("chest_cm"):       parts.append(f"chest={b['chest_cm']}cm")
+            if b.get("waist_cm"):       parts.append(f"waist={b['waist_cm']}cm")
+            if b.get("hips_cm"):        parts.append(f"hips={b['hips_cm']}cm")
             lines.append("  " + "  ".join(parts))
         lines.append("")
     else:
         lines.append("=== BODY MEASUREMENTS: None logged this week ===\n")
+
+    # ── Workout Sessions (actual exercise log) ───────────────────────────────
+    if week_sessions:
+        lines.append("=== WORKOUT SESSIONS THIS WEEK (actual exercise log) ===")
+        for s in week_sessions:
+            dur = f", {s['duration_mins']} mins" if s.get("duration_mins") else ""
+            lines.append(f"[{s.get('date', '?')}] {s['name']}{dur}")
+            for ex in s.get("exercises", []):
+                lines.append(f"  {ex['name']}")
+                for st in ex.get("sets", []):
+                    parts = [f"    Set {st['set']}:"]
+                    if st.get("reps"):      parts.append(f"{st['reps']} reps")
+                    if st.get("weight_kg"): parts.append(f"@ {st['weight_kg']}kg")
+                    if st.get("rest_secs"): parts.append(f"rest {st['rest_secs']}s")
+                    lines.append(" ".join(parts))
+        lines.append("")
+    else:
+        lines.append("=== WORKOUT SESSIONS: None completed this week ===\n")
 
     # ── Memory Facts (long-term context about this user) ──────────────────────
     if memory_facts:
@@ -138,6 +170,27 @@ def build_summary_prompt(
         for f in memory_facts:
             lines.append(f"  [{f['category']}] {f['fact']}")
         lines.append("")
+
+    # ── Weekly Mood Ratings ───────────────────────────────────────────────────
+    if week_mood and week_mood.get("sessions"):
+        lines.append("=== MOOD RATINGS THIS WEEK (1=very low, 10=peak) ===")
+        for s in week_mood["sessions"]:
+            parts = [f"[{s.get('date', '?')}] {s.get('name', 'Workout')}:"]
+            if "mood_before" in s:
+                parts.append(f"pre={s['mood_before']}/10")
+            if "mood_after" in s:
+                parts.append(f"post={s['mood_after']}/10")
+            lines.append("  " + "  ".join(parts))
+        # Averages
+        if week_mood.get("avg_mood_before") is not None:
+            lines.append(f"  Avg pre-workout mood : {week_mood['avg_mood_before']}/10")
+        if week_mood.get("avg_mood_after") is not None:
+            lines.append(f"  Avg post-workout mood: {week_mood['avg_mood_after']}/10")
+        if week_mood.get("min_mood_before") is not None and week_mood["min_mood_before"] <= 4:
+            lines.append(f"  ⚠ Lowest pre-workout mood this week: {week_mood['min_mood_before']}/10")
+        lines.append("")
+    else:
+        lines.append("=== MOOD RATINGS: Not recorded this week ===\n")
 
     # ── Previous Summaries (for trend analysis) ───────────────────────────────
     if previous_summaries:

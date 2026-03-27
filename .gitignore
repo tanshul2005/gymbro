@@ -16,6 +16,7 @@ dist/
 
 # Alembic
 backend/alembic/versions/*.py
+backend/seed_week.py
 
 # IDE
 .vscode/

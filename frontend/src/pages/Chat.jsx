@@ -40,7 +40,7 @@ export default function Chat() {
         style={{
           display: "flex",
           flexDirection: "column",
-          height: "100%",
+          height: "100vh",        // pin to viewport — don't grow with parent scroll
           overflow: "hidden",
         }}
       >

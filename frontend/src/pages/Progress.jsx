@@ -181,7 +181,7 @@ export default function Progress() {
 
   return (
     <Layout>
-      <div style={{ padding: "36px 40px", maxWidth: "1000px", width: "100%", overflowY: "auto", flex: 1 }}>
+      <div style={{ padding: "36px 40px", maxWidth: "1000px", width: "100%" }}>
 
         {/* ── Header ── */}
         <div

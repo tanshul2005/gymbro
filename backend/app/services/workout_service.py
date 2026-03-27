@@ -132,6 +132,7 @@ async def create_session(
         plan_id=data.plan_id,
         name=plan.name if plan else None,
         notes=data.notes,
+        mood_before=data.mood_before,
         status=SessionStatusEnum.in_progress,
         started_at=_utcnow(),
     )
@@ -218,6 +219,8 @@ async def complete_session(
 
     if data.notes:
         session.notes = data.notes
+    if data.mood_after is not None:
+        session.mood_after = data.mood_after
 
     await db.commit()
 

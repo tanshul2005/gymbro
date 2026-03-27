@@ -11,6 +11,8 @@ class FactCategoryEnum(str, enum.Enum):
     achievement = "achievement"
     habit = "habit"
     personal = "personal"
+    emotion = "emotion"   # burnout signals, motivation state, mood patterns
+    event = "event"       # races, competitions, life events affecting training
     other = "other"
 
 class MessageRoleEnum(str, enum.Enum):

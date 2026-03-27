@@ -22,11 +22,34 @@ export default function WorkoutPlans() {
     setPlans((prev) => [newPlan, ...prev]);
   };
 
-  const handleStartSession = async (planId) => {
+  // Pre-workout mood picker state
+  const [moodPlanId, setMoodPlanId] = useState(null); // plan awaiting mood pick
+  const [moodBefore, setMoodBefore] = useState(null);
+  const MOOD_OPTIONS = [
+    { value: 2,  emoji: "😫", label: "Drained" },
+    { value: 4,  emoji: "😕", label: "Low" },
+    { value: 6,  emoji: "😐", label: "Okay" },
+    { value: 8,  emoji: "😊", label: "Good" },
+    { value: 10, emoji: "🤩", label: "Pumped" },
+  ];
+
+  // Step 1 — open picker instead of starting immediately
+  const handleStartSession = (planId) => {
     if (startingPlanId) return;
+    setMoodBefore(null);
+    setMoodPlanId(planId);
+  };
+
+  // Step 2 — user confirms mood (or skips)
+  const confirmStart = async (mood) => {
+    const planId = moodPlanId;
+    setMoodPlanId(null);
+    if (!planId || startingPlanId) return;
     setStartingPlanId(planId);
     try {
-      const res = await startSession({ plan_id: planId });
+      const payload = { plan_id: planId };
+      if (mood !== null) payload.mood_before = mood;
+      const res = await startSession(payload);
       navigate(`/workouts/active/${res.data.id}`);
     } catch (err) {
       setError(err?.message ?? "Failed to start session.");
@@ -249,6 +272,95 @@ export default function WorkoutPlans() {
           onClose={() => setShowModal(false)}
           onCreated={handlePlanCreated}
         />
+      )}
+
+      {/* ── Pre-workout mood picker ── */}
+      {moodPlanId && (
+        <>
+          <div
+            onClick={() => setMoodPlanId(null)}
+            style={{
+              position: "fixed", inset: 0,
+              background: "rgba(0,0,0,0.65)",
+              zIndex: 50,
+            }}
+            aria-hidden="true"
+          />
+          <div
+            role="dialog"
+            aria-label="How are you feeling?"
+            style={{
+              position: "fixed",
+              top: "50%", left: "50%",
+              transform: "translate(-50%,-50%)",
+              background: "#161a24",
+              border: "1px solid #1e2130",
+              borderRadius: "16px",
+              padding: "28px 32px",
+              zIndex: 60,
+              width: "min(380px, 90vw)",
+              textAlign: "center",
+            }}
+          >
+            <p style={{ fontSize: "11px", color: "#4a5568", letterSpacing: "0.1em", marginBottom: "8px" }}>PRE-WORKOUT</p>
+            <h2 style={{ fontSize: "18px", fontWeight: "700", color: "#f0f4f8", marginBottom: "24px" }}>How are you feeling?</h2>
+            <div style={{ display: "flex", justifyContent: "center", gap: "10px", marginBottom: "24px" }}>
+              {MOOD_OPTIONS.map(({ value, emoji, label }) => (
+                <button
+                  key={value}
+                  onClick={() => setMoodBefore(moodBefore === value ? null : value)}
+                  title={label}
+                  aria-label={label}
+                  style={{
+                    fontSize: "26px",
+                    padding: "8px",
+                    borderRadius: "10px",
+                    border: `2px solid ${moodBefore === value ? "#c8f135" : "transparent"}`,
+                    background: moodBefore === value ? "rgba(200,241,53,0.1)" : "transparent",
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                    lineHeight: 1,
+                  }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+            {moodBefore && (
+              <p style={{ fontSize: "12px", color: "#c8f135", marginBottom: "16px", fontWeight: "600" }}>
+                {MOOD_OPTIONS.find(m => m.value === moodBefore)?.label}
+              </p>
+            )}
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button
+                onClick={() => confirmStart(null)}
+                style={{
+                  flex: 1, padding: "10px", borderRadius: "8px",
+                  border: "1px solid #2d3748", background: "transparent",
+                  color: "#4a5568", fontSize: "12px", cursor: "pointer",
+                }}
+              >
+                Skip
+              </button>
+              <button
+                onClick={() => confirmStart(moodBefore)}
+                disabled={!moodBefore}
+                style={{
+                  flex: 2, padding: "10px", borderRadius: "8px",
+                  border: "none",
+                  background: moodBefore ? "#c8f135" : "#2d3748",
+                  color: moodBefore ? "#0f1117" : "#4a5568",
+                  fontSize: "13px", fontWeight: "700",
+                  cursor: moodBefore ? "pointer" : "not-allowed",
+                  transition: "all 0.15s ease",
+                }}
+                aria-label="Start workout session"
+              >
+                Start Workout
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </Layout>
   );

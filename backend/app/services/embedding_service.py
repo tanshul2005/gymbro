@@ -88,9 +88,37 @@ async def store_memory_embedding(
       - timestamp   : unix epoch — used for recency scoring during retrieval
       - fact_text   : raw text — returned as context string without extra DB lookup
     """
+    # ── Cosine dedup (Section IV-B) ──────────────────────────────────────────
+    # ChromaDB stores cosine *distance* (0 = identical, 2 = opposite).
+    # Similarity = 1 - distance, so threshold 0.92 → max distance 0.08.
+    _COSINE_DEDUP_THRESHOLD = 0.92
+
     try:
         episodes, _ = _get_chroma_collections()
         vector = await embed_text(fact_text)
+
+        # Only run the similarity check if the collection has at least one doc
+        # for this user (query will error with n_results > collection size).
+        existing_count = episodes.count()
+        if existing_count > 0:
+            dedup_result = episodes.query(
+                query_embeddings=[vector],
+                n_results=1,
+                where={"user_id": user_id},
+                include=["distances"],
+            )
+            ids_found = dedup_result.get("ids", [[]])[0]
+            distances_found = dedup_result.get("distances", [[]])[0]
+
+            if ids_found and distances_found:
+                top_similarity = 1.0 - distances_found[0]
+                if top_similarity >= _COSINE_DEDUP_THRESHOLD:
+                    logger.debug(
+                        f"Skipping duplicate fact {fact_id}: cosine similarity "
+                        f"{top_similarity:.4f} >= {_COSINE_DEDUP_THRESHOLD} "
+                        f"(nearest: {ids_found[0]})"
+                    )
+                    return
 
         ts = (created_at or datetime.now(timezone.utc)).timestamp()
 

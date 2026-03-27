@@ -89,6 +89,9 @@ class WorkoutSession(Base):
     name = Column(String(255), nullable=True)
     status = Column(Enum(SessionStatusEnum), nullable=False, default=SessionStatusEnum.in_progress)
     notes = Column(Text, nullable=True)
+    # Mood ratings 1-10 captured pre/post session (paper Table III)
+    mood_before = Column(Integer, nullable=True)   # set at session start
+    mood_after = Column(Integer, nullable=True)    # set at session completion
     started_at = Column(DateTime(timezone=True), nullable=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     duration_minutes = Column(Integer, nullable=True)

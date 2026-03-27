@@ -221,7 +221,7 @@ export default function Dashboard() {
         }
       `}</style>
 
-      <div style={{ padding: "36px 40px", maxWidth: "1100px", width: "100%", overflowY: "auto", flex: 1 }}>
+      <div style={{ padding: "36px 40px", maxWidth: "1100px", width: "100%" }}>
 
         {/* Header */}
         <div style={{ marginBottom: "36px" }}>

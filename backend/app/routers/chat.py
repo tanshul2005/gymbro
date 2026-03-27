@@ -10,7 +10,7 @@ from app.core.dependencies import get_current_user
 from app.models.user import User, Profile
 from app.models.memory import Conversation, Message, MessageRoleEnum, MemoryFact
 from app.models.workout import WorkoutSession, SessionStatusEnum, SessionExercise, ExerciseSet
-from app.models.metrics import DailyMetrics
+from app.models.metrics import DailyMetrics, BodyMeasurement
 from app.schemas.chat import ChatMessageRequest, ChatHistoryResponse, MessageOut
 from app.services.llm_service import stream_chat_response
 from app.services.memory_service import process_message_for_memory, get_relevant_memories
@@ -87,6 +87,27 @@ async def _build_context(
                 "sleep_hours":        today_metrics.sleep_hours,
                 "water_ml":           today_metrics.water_ml,
                 "resting_heart_rate": today_metrics.resting_heart_rate,
+                "notes":              today_metrics.notes,
+            }
+
+        # Today's body measurement snapshot
+        body_result = await db.execute(
+            select(BodyMeasurement).where(
+                and_(
+                    BodyMeasurement.user_id == user_id,
+                    BodyMeasurement.date == today,
+                )
+            )
+        )
+        today_body = body_result.scalar_one_or_none()
+        if today_body:
+            today_data["body"] = {
+                "weight_kg":      today_body.weight_kg,
+                "body_fat_pct":   today_body.body_fat_pct,
+                "muscle_mass_kg": today_body.muscle_mass_kg,
+                "chest_cm":       today_body.chest_cm,
+                "waist_cm":       today_body.waist_cm,
+                "hips_cm":        today_body.hips_cm,
             }
 
         # Today's most recent workout session (completed or in-progress)
@@ -145,6 +166,8 @@ async def _build_context(
                 "duration_mins":  today_session.duration_minutes,
                 "exercise_count": len(session_exercises),
                 "exercises":      exercises_detail,
+                "mood_before":    today_session.mood_before,
+                "mood_after":     today_session.mood_after,
             }
 
         context["today"] = today_data
@@ -153,24 +176,97 @@ async def _build_context(
         import logging
         logging.getLogger(__name__).error(f"Context: today fetch failed: {e}")
 
+    # ── Recent Sessions (last 7 days) — for "what did I do this week" questions ─
+    try:
+        from datetime import timedelta
+        week_ago = datetime.combine(date.today() - timedelta(days=7), datetime.min.time())
+
+        recent_result = await db.execute(
+            select(WorkoutSession)
+            .where(
+                and_(
+                    WorkoutSession.user_id == user_id,
+                    WorkoutSession.started_at >= week_ago,
+                    WorkoutSession.status == SessionStatusEnum.completed,
+                )
+            )
+            .order_by(desc(WorkoutSession.started_at))
+            .limit(10)
+        )
+        recent_sessions = recent_result.scalars().all()
+
+        sessions_data = []
+        for ws in recent_sessions:
+            ex_result = await db.execute(
+                select(SessionExercise)
+                .where(SessionExercise.session_id == ws.id)
+                .order_by(SessionExercise.order_index)
+            )
+            session_exs = ex_result.scalars().all()
+
+            exercises_detail = []
+            for se in session_exs:
+                sets_result = await db.execute(
+                    select(ExerciseSet)
+                    .where(
+                        ExerciseSet.session_exercise_id == se.id,
+                        ExerciseSet.is_logged == True,  # noqa: E712
+                    )
+                    .order_by(ExerciseSet.set_number)
+                )
+                sets = sets_result.scalars().all()
+                exercises_detail.append({
+                    "name": se.exercise_name,
+                    "muscle_group": se.muscle_group,
+                    "sets": [
+                        {
+                            "set": s.set_number,
+                            "reps": s.reps,
+                            "weight_kg": s.weight_kg,
+                            "rest_secs": s.rest_seconds,
+                        }
+                        for s in sets
+                    ],
+                })
+
+            sessions_data.append({
+                "date": ws.started_at.date().isoformat() if ws.started_at else None,
+                "name": ws.name or "Workout",
+                "duration_mins": ws.duration_minutes,
+                "mood_before": ws.mood_before,
+                "mood_after": ws.mood_after,
+                "exercise_count": len(session_exs),
+                "exercises": exercises_detail,
+            })
+
+        context["recent_sessions"] = sessions_data
+
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Context: recent sessions fetch failed: {e}")
+
     # ── Stats (last 30 days) ──────────────────────────────────────────────────
     try:
         summary = await get_metrics_summary(db=db, user_id=user_id)
 
         context["stats"] = {
             "aggregations": {
-                "avg_steps":           summary.avg_steps,
-                "avg_calories_burned": summary.avg_calories_burned,
-                "avg_sleep_hours":     summary.avg_sleep_hours,
-                "avg_water_ml":        summary.total_water_ml,
-                "avg_resting_hr":      summary.avg_resting_heart_rate,
-                "workout_count":       summary.workout_count,
-                "current_streak":      summary.current_streak,
-                "longest_streak":      summary.longest_streak,
+                "avg_steps":              summary.avg_steps,
+                "avg_calories_burned":    summary.avg_calories_burned,
+                "avg_calories_consumed":  summary.avg_calories_consumed,
+                "avg_sleep_hours":        summary.avg_sleep_hours,
+                "avg_water_ml":           summary.total_water_ml,
+                "avg_resting_hr":         summary.avg_resting_heart_rate,
+                "workout_count":          summary.workout_count,
+                "current_streak":         summary.current_streak,
+                "longest_streak":         summary.longest_streak,
+                "days_logged":            summary.days_logged,
+                "weight_change_kg":       summary.weight_change_kg,
             },
             "latest_body": {
-                "weight_kg":    summary.latest_weight_kg,
-                "body_fat_pct": summary.latest_body_fat_pct,
+                "weight_kg":      summary.latest_weight_kg,
+                "body_fat_pct":   summary.latest_body_fat_pct,
+                "muscle_mass_kg": getattr(summary, "latest_muscle_mass_kg", None),
             },
         }
     except Exception as e:
